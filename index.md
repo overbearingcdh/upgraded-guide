@@ -4,3 +4,5 @@
 
 - [使用指南](guide.md)
 - [API参考](api.md)（后续可添加）
+
+[编辑此文档](editor.html){: .btn}
