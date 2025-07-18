@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>文档编辑器</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/easymde/dist/easymde.min.css">
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+        .editor-container { margin: 20px 0; }
+        .btn { background: #2ea44f; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 14px; }
+        .btn:hover { background: #22863a; }
+        .login-panel { text-align: center; margin-top: 100px; }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <div class="login-panel" id="loginPanel">
+            <h2>文档编辑系统</h2>
+            <button class="btn" onclick="loginWithGitHub()">使用 GitHub 登录</button>
+        </div>
+        
+        <div id="editorPanel" style="display:none;">
+            <h2>编辑文档</h2>
+            <div>
+                <label for="fileSelector">选择文件：</label>
+                <select id="fileSelector">
+                    <option value="">-- 请选择文档 --</option>
+                </select>
+            </div>
+            
+            <div class="editor-container">
+                <textarea id="markdown-editor"></textarea>
+            </div>
+            
+            <div>
+                <button class="btn" id="saveBtn">保存更改</button>
+                <span id="statusMsg" style="margin-left: 10px;"></span>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/easymde/dist/easymde.min.js"></script>
+    <script>
+        // 替换为你的 GitHub 信息
+        const CLIENT_ID = '你的ClientID';
+        const REPO_OWNER = '你的GitHub用户名';
+        const REPO_NAME = '你的仓库名';
+        
+        let accessToken = null;
+        let currentFile = null;
+        
+        // 初始化编辑器
+        const editor = new EasyMDE({
+            element: document.getElementById('markdown-editor'),
+            spellChecker: false,
+            autosave: {
+                enabled: false
+            }
+        });
+        
+        // GitHub 登录
+        function loginWithGitHub() {
+            const redirectUri = encodeURIComponent(window.location.origin + '/callback.html');
+            const scope = encodeURIComponent('repo');
+            const url = `https://github.com/login/oauth/authorize?client_id=${CLIENT_ID}&redirect_uri=${redirectUri}&scope=${scope}`;
+            window.location.href = url;
+        }
+        
+        // 检查URL中是否有授权码
+        function checkAuthCode() {
+            const params = new URLSearchParams(window.location.search);
+            const code = params.get('code');
+            
+            if (code) {
+                // 获取 access token
+                fetch(`https://github.com/login/oauth/access_token`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        client_id: CLIENT_ID,
+                        client_secret: '你的ClientSecret', // 在实际应用中应使用后端保护
+                        code: code
+                    })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    accessToken = data.access_token;
+                    window.history.replaceState({}, document.title, "/editor.html");
+                    document.getElementById('loginPanel').style.display = 'none';
+                    document.getElementById('editorPanel').style.display = 'block';
+                    loadFileList();
+                });
+            }
+        }
+        
+        // 加载文件列表
+        function loadFileList() {
+            fetch(`https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/contents/`, {
+                headers: {
+                    'Authorization': `token ${accessToken}`
+                }
+            })
+            .then(response => response.json())
+            .then(files => {
+                const selector = document.getElementById('fileSelector');
+                selector.innerHTML = '<option value="">-- 请选择文档 --</option>';
+                
+                files.forEach(file => {
+                    if (file.name.endsWith('.md')) {
+                        const option = document.createElement('option');
+                        option.value = file.path;
+                        option.textContent = file.name;
+                        selector.appendChild(option);
+                    }
+                });
+                
+                selector.addEventListener('change', loadFileContent);
+            });
+        }
+        
+        // 加载文件内容
+        function loadFileContent(event) {
+            const filePath = event.target.value;
+            if (!filePath) return;
+            
+            currentFile = filePath;
+            
+            fetch(`https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/contents/${filePath}`, {
+                headers: {
+                    'Authorization': `token ${accessToken}`
+                }
+            })
+            .then(response => response.json())
+            .then(fileData => {
+                const content = atob(fileData.content);
+                editor.value(content);
+            });
+        }
+        
+        // 保存文件
+        document.getElementById('saveBtn').addEventListener('click', saveFile);
+        
+        function saveFile() {
+            if (!currentFile) {
+                showStatus('请先选择文件', 'error');
+                return;
+            }
+            
+            // 获取当前文件SHA（用于更新）
+            fetch(`https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/contents/${currentFile}`, {
+                headers: {
+                    'Authorization': `token ${accessToken}`
+                }
+            })
+            .then(response => response.json())
+            .then(fileData => {
+                const content = editor.value();
+                const encodedContent = btoa(unescape(encodeURIComponent(content)));
+                
+                return fetch(`https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/contents/${currentFile}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Authorization': `token ${accessToken}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        message: `更新文档: ${currentFile}`,
+                        content: encodedContent,
+                        sha: fileData.sha
+                    })
+                });
+            })
+            .then(response => response.json())
+            .then(result => {
+                if (result.content) {
+                    showStatus('保存成功! 页面将在几秒后更新', 'success');
+                    setTimeout(() => {
+                        window.location.href = `/${currentFile.replace('.md', '.html')}`;
+                    }, 3000);
+                } else {
+                    showStatus('保存失败: ' + result.message, 'error');
+                }
+            });
+        }
+        
+        function showStatus(message, type) {
+            const statusMsg = document.getElementById('statusMsg');
+            statusMsg.textContent = message;
+            statusMsg.style.color = type === 'success' ? 'green' : 'red';
+            setTimeout(() => {
+                statusMsg.textContent = '';
+            }, 5000);
+        }
+        
+        // 初始化检查
+        checkAuthCode();
+    </script>
+</body>
+</html>
