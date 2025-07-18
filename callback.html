@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>处理授权</title>
+    <script>
+        // 将授权码传递给编辑器页面
+        window.addEventListener('DOMContentLoaded', () => {
+            const params = new URLSearchParams(window.location.search);
+            const code = params.get('code');
+            
+            if (code) {
+                window.opener.postMessage({ type: 'github-auth-code', code }, '*');
+                window.close();
+            }
+        });
+    </script>
+</head>
+<body>
+    <p>正在处理授权，请稍候...</p>
+</body>
+</html>
